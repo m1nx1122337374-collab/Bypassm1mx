@@ -16,6 +16,16 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"ok")
+        elif self.path == "/html/meta":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(b'<meta http-equiv="refresh" content="0; url=/destination?via=meta">')
+        elif self.path == "/html/js":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(b'<script>window.location.href="/destination?via=js"</script>')
         elif self.path == "/slow":
             import time
             time.sleep(0.2)
@@ -64,6 +74,26 @@ async def test_invalid_scheme_is_api_error(app_client):
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post("/api/v1/resolve", json={"url": "javascript:alert(1)"})
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_html_endpoint_follows_explicit_meta_refresh(app_client, target_server):
+    transport = httpx.ASGITransport(app=app_client)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/api/v1/resolve/html", json={"url": f"{target_server}/html/meta"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["final_url"].endswith("/destination?via=meta")
+    assert body["html_redirect_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_html_parser_is_conservative(app_client, target_server):
+    transport = httpx.ASGITransport(app=app_client)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/api/v1/resolve/html", json={"url": f"{target_server}/html/js"})
+    assert response.status_code == 200
+    assert response.json()["final_url"].endswith("/destination?via=js")
 
 
 @pytest.mark.asyncio

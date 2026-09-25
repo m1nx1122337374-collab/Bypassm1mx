@@ -8,11 +8,14 @@ from __future__ import annotations
 import ipaddress
 import logging
 import os
+import re
 import socket
 import time
 from contextlib import asynccontextmanager
+from html import unescape
+from html.parser import HTMLParser
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
@@ -24,6 +27,8 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 API_KEY = os.getenv("API_KEY", "").strip()
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "10"))
 MAX_REDIRECTS = int(os.getenv("MAX_REDIRECTS", "10"))
+MAX_HTML_REDIRECTS = int(os.getenv("MAX_HTML_REDIRECTS", "3"))
+MAX_HTML_BYTES = int(os.getenv("MAX_HTML_BYTES", "1048576"))
 MAX_URL_LENGTH = int(os.getenv("MAX_URL_LENGTH", "4096"))
 BLOCK_PRIVATE_NETWORKS = os.getenv("BLOCK_PRIVATE_NETWORKS", "true").lower() not in {"0", "false", "no"}
 ALLOWED_HOSTS = {h.strip().lower() for h in os.getenv("ALLOWED_HOSTS", "").split(",") if h.strip()}
@@ -55,12 +60,46 @@ class ResolveResponse(BaseModel):
     final_url: str
     status_code: int
     redirect_count: int
+    html_redirect_count: int = 0
     elapsed_ms: int
 
 
 class ErrorResponse(BaseModel):
     ok: bool = False
     error: dict[str, Any]
+
+
+class HTMLRedirectParser(HTMLParser):
+    """Collect only explicit HTML meta-refresh targets; do not scrape arbitrary links."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.refresh_content: str | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() != "meta":
+            return
+        values = {key.lower(): (value or "") for key, value in attrs}
+        if values.get("http-equiv", "").lower() == "refresh":
+            self.refresh_content = values.get("content", "")
+
+
+def extract_html_redirect(html: str, base_url: str) -> str | None:
+    """Return an explicit meta-refresh or JS location target, if present.
+
+    This is intentionally conservative: it does not execute JavaScript, scrape
+    arbitrary anchors, or attempt to bypass an interstitial/access-control page.
+    """
+    parser = HTMLRedirectParser()
+    parser.feed(html)
+    if parser.refresh_content:
+        match = re.match(r"^\s*\d+\s*;\s*url\s*=\s*[\"']?([^\"']+?)\s*[\"']?\s*$", parser.refresh_content, re.IGNORECASE)
+        if match:
+            return urljoin(base_url, unescape(match.group(1).strip()))
+    match = re.search(r"(?:window\.location|location)\.(?:href|replace)\s*(?:=|\()\s*[\"']([^\"']+)[\"']", html, re.IGNORECASE)
+    if match:
+        return urljoin(base_url, unescape(match.group(1).strip()))
+    return None
 
 
 @asynccontextmanager
@@ -144,19 +183,35 @@ def error_payload(code: str, message: str, request_id: str) -> ErrorResponse:
     return ErrorResponse(error={"code": code, "message": message, "request_id": request_id})
 
 
-async def resolve_url(request: Request, payload: ResolveRequest, _: None = Depends(api_key_guard)) -> ResolveResponse:
+async def resolve_url(request: Request, payload: ResolveRequest, _: None = Depends(api_key_guard), allow_html_redirects: bool = False) -> ResolveResponse:
     request_id = request.headers.get("x-request-id", "")[:128] or os.urandom(8).hex()
     started = time.perf_counter()
     logger.info("resolve_started request_id=%s url=%s", request_id, payload.url)
     validate_target_host(payload.url)
     try:
         client = getattr(request.app.state, "http_client", None)
-        if client is not None:
-            response = await client.get(payload.url)
-        else:
+        owns_client = client is None
+        if owns_client:
             timeout = httpx.Timeout(REQUEST_TIMEOUT_SECONDS, connect=REQUEST_TIMEOUT_SECONDS)
-            async with httpx.AsyncClient(follow_redirects=True, max_redirects=MAX_REDIRECTS, timeout=timeout, headers={"User-Agent": USER_AGENT, "Accept": "*/*"}) as test_client:
-                response = await test_client.get(payload.url)
+            client = httpx.AsyncClient(follow_redirects=True, max_redirects=MAX_REDIRECTS, timeout=timeout, headers={"User-Agent": USER_AGENT, "Accept": "*/*"})
+        current_url = payload.url
+        html_redirect_count = 0
+        try:
+            while True:
+                validate_target_host(current_url)
+                response = await client.get(current_url)
+                content_type = response.headers.get("content-type", "").lower()
+                if not allow_html_redirects or "text/html" not in content_type or html_redirect_count >= MAX_HTML_REDIRECTS:
+                    break
+                html = response.content[:MAX_HTML_BYTES].decode(response.encoding or "utf-8", errors="replace")
+                target = extract_html_redirect(html, str(response.url))
+                if not target or target == str(response.url):
+                    break
+                current_url = ResolveRequest(url=target).url
+                html_redirect_count += 1
+        finally:
+            if owns_client:
+                await client.aclose()
     except httpx.TimeoutException as exc:
         logger.warning("resolve_timeout request_id=%s url=%s", request_id, payload.url)
         raise HTTPException(status_code=504, detail=error_payload("upstream_timeout", "the target did not respond before the configured timeout", request_id).model_dump()) from exc
@@ -177,6 +232,7 @@ async def resolve_url(request: Request, payload: ResolveRequest, _: None = Depen
         final_url=str(response.url),
         status_code=response.status_code,
         redirect_count=redirect_count,
+        html_redirect_count=html_redirect_count,
         elapsed_ms=elapsed_ms,
     )
 
@@ -189,6 +245,12 @@ async def healthz() -> dict[str, str]:
 @app.post("/api/v1/resolve", response_model=ResolveResponse, responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}, 502: {"model": ErrorResponse}, 504: {"model": ErrorResponse}, 508: {"model": ErrorResponse}})
 async def resolve_post(request: Request, payload: ResolveRequest, _: None = Depends(api_key_guard)) -> ResolveResponse:
     return await resolve_url(request, payload, _)
+
+
+@app.post("/api/v1/resolve/html", response_model=ResolveResponse)
+async def resolve_html_post(request: Request, payload: ResolveRequest, _: None = Depends(api_key_guard)) -> ResolveResponse:
+    """Follow HTTP redirects plus explicit meta-refresh/JS-location patterns."""
+    return await resolve_url(request, payload, _, allow_html_redirects=True)
 
 
 @app.get("/api/v1/resolve", response_model=ResolveResponse)

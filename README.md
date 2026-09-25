@@ -7,9 +7,11 @@ A small, production-oriented FastAPI service that accepts a short URL, follows *
 ## Features
 
 - `POST /api/v1/resolve` with `{ "url": "https://..." }`
+- `POST /api/v1/resolve/html` for normal HTTP redirects plus explicit HTML meta-refresh/JavaScript-location patterns
 - `GET /api/v1/resolve?url=...`
 - Telegram-bot-ready `GET /api/v1/telegram/resolve?url=...`
 - Follows 301/302/303/307/308 redirects with a configurable limit
+- Optional HTML fallback is bounded by `MAX_HTML_REDIRECTS` and `MAX_HTML_BYTES`
 - Returns the complete final URL, including query strings and fragments when supplied by the server
 - Correctly treats URL text containing `error`, `failed`, or `timeout` as valid URL data; error classification is based on validation and actual HTTP client exceptions only
 - Explicit JSON error envelopes with stable error codes
@@ -49,6 +51,20 @@ Error (`4xx` or `5xx`):
 ```
 
 A final HTTP `404` or `500` response is still a successful *resolution* because the redirect chain completed; its status is returned in `status_code`. Transport failures such as timeouts are API errors.
+
+## HTML redirect fallback
+
+Use `/api/v1/resolve/html` only when an authorized service returns an HTML redirect page instead of an HTTP `Location` header. The parser handles explicit `<meta http-equiv="refresh" content="0; url=/next">` and simple `window.location.href = "..."` / `location.replace("...")` patterns. It does **not** execute JavaScript, scrape arbitrary anchor tags, defeat timers, or bypass CAPTCHA, anti-bot pages, advertisements, authentication, or other access controls. Relative targets are resolved against the response URL and pass the same URL validation/private-network protections as the initial request.
+
+Example:
+
+```bash
+curl -s http://127.0.0.1:8000/api/v1/resolve/html \
+  -H 'content-type: application/json' \
+  -d '{"url":"https://your-authorized-shortener.example/abc"}' | jq
+```
+
+The parser boilerplate is reusable in `extract_html_redirect(html, base_url)`. It returns a target URL or `None`; callers should treat `None` as “no supported HTML redirect found”, not as an API failure.
 
 ## Run locally
 
