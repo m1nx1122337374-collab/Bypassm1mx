@@ -98,6 +98,33 @@ async def test_html_parser_is_conservative(app_client, target_server):
     assert response.json()["final_url"].endswith("/destination?via=js")
 
 
+@pytest.mark.asyncio
+async def test_generic_route_uses_body_api_key_and_beautifulsoup(app_client, target_server, monkeypatch):
+    import app.main as main_module
+    monkeypatch.setattr(main_module, "API_KEY", "test-secret")
+    transport = httpx.ASGITransport(app=app_client)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/resolve/generic",
+            json={"url": f"{target_server}/html/meta", "api_key": "test-secret"},
+        )
+    assert response.status_code == 200
+    assert response.json()["final_url"].endswith("/destination?via=meta")
+
+
+@pytest.mark.asyncio
+async def test_generic_route_rejects_wrong_body_api_key(app_client, monkeypatch):
+    import app.main as main_module
+    monkeypatch.setattr(main_module, "API_KEY", "test-secret")
+    transport = httpx.ASGITransport(app=app_client)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/resolve/generic",
+            json={"url": "https://example.com/short", "api_key": "wrong"},
+        )
+    assert response.status_code == 401
+
+
 def test_earnlinks_adapter_accepts_only_explicit_meta_refresh():
     html = '<a href="https://not-used.example">ignore</a><meta http-equiv="refresh" content="0; url=/next">'
     assert is_earnlinks_url("https://earnlinks.in/example")

@@ -24,6 +24,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.providers.earnlinks import extract_earnlinks_html_redirect, is_earnlinks_url
+from app.providers.generic import extract_standard_html_redirect
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 API_KEY = os.getenv("API_KEY", "").strip()
@@ -54,6 +55,10 @@ class ResolveRequest(BaseModel):
         if parsed.username or parsed.password:
             raise ValueError("URLs with embedded credentials are not accepted")
         return value
+
+
+class GenericResolveRequest(ResolveRequest):
+    api_key: str = Field(..., min_length=1, max_length=256)
 
 
 class ResolveResponse(BaseModel):
@@ -156,6 +161,13 @@ def api_key_guard(x_api_key: str | None = Header(default=None)) -> None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid API key")
 
 
+def validate_body_api_key(api_key: str) -> None:
+    if not API_KEY:
+        raise HTTPException(status_code=503, detail="body API key authentication is not configured")
+    if api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="invalid API key")
+
+
 def _is_private_ip(value: str) -> bool:
     try:
         address = ipaddress.ip_address(value)
@@ -253,6 +265,18 @@ async def resolve_post(request: Request, payload: ResolveRequest, _: None = Depe
 async def resolve_html_post(request: Request, payload: ResolveRequest, _: None = Depends(api_key_guard)) -> ResolveResponse:
     """Follow HTTP redirects plus explicit meta-refresh/JS-location patterns."""
     return await resolve_url(request, payload, _, allow_html_redirects=True)
+
+
+@app.post("/api/v1/resolve/generic", response_model=ResolveResponse)
+async def resolve_generic_post(request: Request, payload: GenericResolveRequest) -> ResolveResponse:
+    """Generic body-based resolver: accepts url and configured api_key."""
+    validate_body_api_key(payload.api_key)
+    return await resolve_url(
+        request,
+        ResolveRequest(url=payload.url),
+        allow_html_redirects=True,
+        html_redirect_extractor=extract_standard_html_redirect,
+    )
 
 
 @app.post("/api/v1/resolve/earnlinks", response_model=ResolveResponse)

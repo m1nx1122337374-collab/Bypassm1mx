@@ -8,6 +8,7 @@ A small, production-oriented FastAPI service that accepts a short URL, follows *
 
 - `POST /api/v1/resolve` with `{ "url": "https://..." }`
 - `POST /api/v1/resolve/html` for normal HTTP redirects plus explicit HTML meta-refresh/JavaScript-location patterns
+- `POST /api/v1/resolve/generic` accepting `{ "url": "...", "api_key": "..." }`
 - `POST /api/v1/resolve/earnlinks` for authorized `earnlinks.in` URLs using a provider-specific BeautifulSoup adapter
 - `GET /api/v1/resolve?url=...`
 - Telegram-bot-ready `GET /api/v1/telegram/resolve?url=...`
@@ -66,6 +67,18 @@ curl -s http://127.0.0.1:8000/api/v1/resolve/html \
 ```
 
 The parser boilerplate is reusable in `extract_html_redirect(html, base_url)`. It returns a target URL or `None`; callers should treat `None` as “no supported HTML redirect found”, not as an API failure.
+
+## Generic body-based resolver route
+
+Set `API_KEY` in the environment and send it in the request body:
+
+```bash
+curl -s http://127.0.0.1:8000/api/v1/resolve/generic \
+  -H 'content-type: application/json' \
+  -d '{"url":"https://your-authorized-shortener.example/abc","api_key":"YOUR_API_KEY"}' | jq
+```
+
+This route uses `httpx.AsyncClient` for ordinary HTTP redirects and BeautifulSoup via `app/providers/generic.py` for explicit `<meta http-equiv="refresh" content="0; url=...">` targets. It does not execute scripts, scrape arbitrary links, or bypass timers, ads, CAPTCHA, anti-bot controls, authentication, or other protected workflows. If `API_KEY` is unset, the body-key route is disabled with a configuration error rather than accepting an empty secret.
 
 ## earnlinks.in provider adapter
 
