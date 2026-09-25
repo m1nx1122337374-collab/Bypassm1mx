@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: authorized-url-resolver
+    runtime: docker
+    plan: free
+    healthCheckPath: /healthz
+    envVars:
+      - key: API_KEY
+        sync: false
+      - key: BLOCK_PRIVATE_NETWORKS
+        value: "true"
+      - key: LOG_LEVEL
+        value: INFO
