@@ -71,6 +71,26 @@ async def test_success_does_not_scan_url_for_error_words(app_client, target_serv
 
 
 @pytest.mark.asyncio
+async def test_bypass_get_returns_resolved_url(app_client, target_server):
+    transport = httpx.ASGITransport(app=app_client)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/bypass", params={"link": f"{target_server}/short/error001"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["resolved_url"].endswith("/destination?slug=error001&state=failed-timeout")
+    assert "final_url" not in body
+
+
+@pytest.mark.asyncio
+async def test_bypass_get_rejects_invalid_link(app_client):
+    transport = httpx.ASGITransport(app=app_client)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/bypass", params={"link": "javascript:alert(1)"})
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_invalid_scheme_is_api_error(app_client):
     transport = httpx.ASGITransport(app=app_client)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

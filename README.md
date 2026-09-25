@@ -7,6 +7,7 @@ A small, production-oriented FastAPI service that accepts a short URL, follows *
 ## Features
 
 - `POST /api/v1/resolve` with `{ "url": "https://..." }`
+- `GET /bypass?link=YOUR_SHORT_LINK` returning the resolved destination in `resolved_url`
 - `POST /api/v1/resolve/html` for normal HTTP redirects plus explicit HTML meta-refresh/JavaScript-location patterns
 - `POST /api/v1/resolve/generic` accepting `{ "url": "...", "api_key": "..." }`
 - `POST /api/v1/resolve/earnlinks` for authorized `earnlinks.in` URLs using a provider-specific BeautifulSoup adapter
@@ -53,6 +54,28 @@ Error (`4xx` or `5xx`):
 ```
 
 A final HTTP `404` or `500` response is still a successful *resolution* because the redirect chain completed; its status is returned in `status_code`. Transport failures such as timeouts are API errors.
+
+## Simple GET redirector
+
+```bash
+curl -sG http://127.0.0.1:8000/bypass \
+  --data-urlencode 'link=https://your-authorized-shortener.example/abc' | jq
+```
+
+Success responses contain `resolved_url`:
+
+```json
+{
+  "ok": true,
+  "requested_url": "https://short.example/abc",
+  "resolved_url": "https://destination.example/path",
+  "status_code": 200,
+  "redirect_count": 1,
+  "elapsed_ms": 143
+}
+```
+
+The route follows ordinary HTTP `Location` redirects only. If `API_KEY` is configured, send it in the `X-API-Key` header. It does not use a third-party API or attempt to bypass access controls.
 
 ## HTML redirect fallback
 

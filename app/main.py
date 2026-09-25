@@ -71,6 +71,15 @@ class ResolveResponse(BaseModel):
     elapsed_ms: int
 
 
+class BypassResponse(BaseModel):
+    ok: bool = True
+    requested_url: str
+    resolved_url: str
+    status_code: int
+    redirect_count: int
+    elapsed_ms: int
+
+
 class ErrorResponse(BaseModel):
     ok: bool = False
     error: dict[str, Any]
@@ -254,6 +263,23 @@ async def resolve_url(request: Request, payload: ResolveRequest, _: None = Depen
 @app.get("/healthz", response_model=dict[str, str])
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/bypass", response_model=BypassResponse)
+async def bypass(request: Request, link: str = Query(..., min_length=1, max_length=MAX_URL_LENGTH), _: None = Depends(api_key_guard)) -> BypassResponse:
+    """Follow standard HTTP Location redirects and return resolved_url."""
+    try:
+        payload = ResolveRequest(url=link)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    result = await resolve_url(request, payload, _)
+    return BypassResponse(
+        requested_url=result.requested_url,
+        resolved_url=result.final_url,
+        status_code=result.status_code,
+        redirect_count=result.redirect_count,
+        elapsed_ms=result.elapsed_ms,
+    )
 
 
 @app.post("/api/v1/resolve", response_model=ResolveResponse, responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}, 502: {"model": ErrorResponse}, 504: {"model": ErrorResponse}, 508: {"model": ErrorResponse}})
