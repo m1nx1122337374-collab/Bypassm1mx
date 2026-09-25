@@ -99,9 +99,11 @@ async def test_homepage_is_a_card_ui(app_client):
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/")
     assert response.status_code == 200
-    assert "Link Destination Resolver" in response.text
-    assert "Original URL" in response.text
-    assert "Resolved destination" in response.text
+    assert "Authorized Link Shortcut" in response.text
+    assert "Original server link" in response.text
+    assert "Resolved / shortcut destination" in response.text
+    assert "Shareable shortcut link" in response.text
+    assert "Shortcut is online" in response.text
 
 
 @pytest.mark.asyncio
