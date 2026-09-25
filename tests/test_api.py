@@ -83,6 +83,28 @@ async def test_bypass_get_returns_resolved_url(app_client, target_server):
 
 
 @pytest.mark.asyncio
+async def test_bypass_get_does_not_require_api_key(app_client, target_server, monkeypatch):
+    import app.main as main_module
+    monkeypatch.setattr(main_module, "API_KEY", "configured-but-not-required-for-public-bypass")
+    transport = httpx.ASGITransport(app=app_client)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/bypass", params={"link": f"{target_server}/short/error001"})
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_homepage_is_a_card_ui(app_client):
+    transport = httpx.ASGITransport(app=app_client)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/")
+    assert response.status_code == 200
+    assert "Link Destination Resolver" in response.text
+    assert "Original URL" in response.text
+    assert "Resolved destination" in response.text
+
+
+@pytest.mark.asyncio
 async def test_bypass_get_rejects_invalid_link(app_client):
     transport = httpx.ASGITransport(app=app_client)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
