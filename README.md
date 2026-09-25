@@ -8,6 +8,7 @@ A small, production-oriented FastAPI service that accepts a short URL, follows *
 
 - `POST /api/v1/resolve` with `{ "url": "https://..." }`
 - `POST /api/v1/resolve/html` for normal HTTP redirects plus explicit HTML meta-refresh/JavaScript-location patterns
+- `POST /api/v1/resolve/earnlinks` for authorized `earnlinks.in` URLs using a provider-specific BeautifulSoup adapter
 - `GET /api/v1/resolve?url=...`
 - Telegram-bot-ready `GET /api/v1/telegram/resolve?url=...`
 - Follows 301/302/303/307/308 redirects with a configurable limit
@@ -65,6 +66,18 @@ curl -s http://127.0.0.1:8000/api/v1/resolve/html \
 ```
 
 The parser boilerplate is reusable in `extract_html_redirect(html, base_url)`. It returns a target URL or `None`; callers should treat `None` as “no supported HTML redirect found”, not as an API failure.
+
+## earnlinks.in provider adapter
+
+The provider endpoint accepts only `earnlinks.in` and `www.earnlinks.in` hostnames:
+
+```bash
+curl -s http://127.0.0.1:8000/api/v1/resolve/earnlinks \
+  -H 'content-type: application/json' \
+  -d '{"url":"https://earnlinks.in/your-authorized-short-url"}' | jq
+```
+
+`app/providers/earnlinks.py` contains the reusable `is_earnlinks_url()` and `extract_earnlinks_html_redirect()` functions. The adapter uses BeautifulSoup only for an explicit `<meta http-equiv="refresh">` target and ignores arbitrary links, scripts, forms, countdowns, advertisements, CAPTCHA, anti-bot checks, authentication, and other access-control mechanisms. It is intended for URLs you own or are authorized to test; if the service requires a user action or protected-page bypass, the endpoint returns the page result rather than attempting to defeat it.
 
 ## Run locally
 

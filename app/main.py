@@ -14,7 +14,7 @@ import time
 from contextlib import asynccontextmanager
 from html import unescape
 from html.parser import HTMLParser
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -22,6 +22,8 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, sta
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.providers.earnlinks import extract_earnlinks_html_redirect, is_earnlinks_url
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 API_KEY = os.getenv("API_KEY", "").strip()
@@ -183,7 +185,7 @@ def error_payload(code: str, message: str, request_id: str) -> ErrorResponse:
     return ErrorResponse(error={"code": code, "message": message, "request_id": request_id})
 
 
-async def resolve_url(request: Request, payload: ResolveRequest, _: None = Depends(api_key_guard), allow_html_redirects: bool = False) -> ResolveResponse:
+async def resolve_url(request: Request, payload: ResolveRequest, _: None = Depends(api_key_guard), allow_html_redirects: bool = False, html_redirect_extractor: Callable[[str, str], str | None] = extract_html_redirect) -> ResolveResponse:
     request_id = request.headers.get("x-request-id", "")[:128] or os.urandom(8).hex()
     started = time.perf_counter()
     logger.info("resolve_started request_id=%s url=%s", request_id, payload.url)
@@ -204,7 +206,7 @@ async def resolve_url(request: Request, payload: ResolveRequest, _: None = Depen
                 if not allow_html_redirects or "text/html" not in content_type or html_redirect_count >= MAX_HTML_REDIRECTS:
                     break
                 html = response.content[:MAX_HTML_BYTES].decode(response.encoding or "utf-8", errors="replace")
-                target = extract_html_redirect(html, str(response.url))
+                target = html_redirect_extractor(html, str(response.url))
                 if not target or target == str(response.url):
                     break
                 current_url = ResolveRequest(url=target).url
@@ -251,6 +253,14 @@ async def resolve_post(request: Request, payload: ResolveRequest, _: None = Depe
 async def resolve_html_post(request: Request, payload: ResolveRequest, _: None = Depends(api_key_guard)) -> ResolveResponse:
     """Follow HTTP redirects plus explicit meta-refresh/JS-location patterns."""
     return await resolve_url(request, payload, _, allow_html_redirects=True)
+
+
+@app.post("/api/v1/resolve/earnlinks", response_model=ResolveResponse)
+async def resolve_earnlinks_post(request: Request, payload: ResolveRequest, _: None = Depends(api_key_guard)) -> ResolveResponse:
+    """Resolve authorized earnlinks.in URLs using HTTP redirects and meta-refresh only."""
+    if not is_earnlinks_url(payload.url):
+        raise HTTPException(status_code=422, detail="only earnlinks.in URLs are supported by this provider endpoint")
+    return await resolve_url(request, payload, _, allow_html_redirects=True, html_redirect_extractor=extract_earnlinks_html_redirect)
 
 
 @app.get("/api/v1/resolve", response_model=ResolveResponse)

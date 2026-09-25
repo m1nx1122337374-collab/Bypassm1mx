@@ -5,6 +5,8 @@ import pytest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 
+from app.providers.earnlinks import extract_earnlinks_html_redirect, is_earnlinks_url
+
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -94,6 +96,22 @@ async def test_html_parser_is_conservative(app_client, target_server):
         response = await client.post("/api/v1/resolve/html", json={"url": f"{target_server}/html/js"})
     assert response.status_code == 200
     assert response.json()["final_url"].endswith("/destination?via=js")
+
+
+def test_earnlinks_adapter_accepts_only_explicit_meta_refresh():
+    html = '<a href="https://not-used.example">ignore</a><meta http-equiv="refresh" content="0; url=/next">'
+    assert is_earnlinks_url("https://earnlinks.in/example")
+    assert not is_earnlinks_url("https://example.com/earnlinks")
+    assert extract_earnlinks_html_redirect(html, "https://earnlinks.in/example") == "https://earnlinks.in/next"
+    assert extract_earnlinks_html_redirect('<script>location.href="/ignored"</script>', "https://earnlinks.in/example") is None
+
+
+@pytest.mark.asyncio
+async def test_earnlinks_endpoint_rejects_other_hosts(app_client):
+    transport = httpx.ASGITransport(app=app_client)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/api/v1/resolve/earnlinks", json={"url": "https://example.com/short"})
+    assert response.status_code == 422
 
 
 @pytest.mark.asyncio
