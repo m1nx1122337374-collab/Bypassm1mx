@@ -33,6 +33,11 @@ class Handler(BaseHTTPRequestHandler):
             time.sleep(0.2)
             self.send_response(200)
             self.end_headers()
+        elif self.path == "/blocked":
+            self.send_response(403)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(b"access denied")
         else:
             self.send_response(404)
             self.end_headers()
@@ -112,6 +117,19 @@ async def test_bypass_get_rejects_invalid_link(app_client):
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/bypass", params={"link": "javascript:alert(1)"})
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_upstream_403_is_not_reported_as_success(app_client, target_server):
+    transport = httpx.ASGITransport(app=app_client)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/bypass", params={"link": f"{target_server}/blocked"})
+    assert response.status_code == 502
+    body = response.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "upstream_blocked"
+    assert body["error"]["upstream_status_code"] == 403
+    assert body["error"]["upstream_url"].endswith("/blocked")
 
 
 @pytest.mark.asyncio

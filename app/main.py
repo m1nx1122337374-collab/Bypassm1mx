@@ -247,6 +247,19 @@ async def resolve_url(request: Request, payload: ResolveRequest, _: None = Depen
         logger.warning("resolve_upstream_error request_id=%s type=%s", request_id, type(exc).__name__)
         raise HTTPException(status_code=502, detail=error_payload("upstream_request_failed", "the target could not be reached", request_id).model_dump()) from exc
 
+    if response.status_code in {401, 403, 429}:
+        logger.warning("resolve_upstream_blocked request_id=%s status=%s url=%s", request_id, response.status_code, response.url)
+        raise HTTPException(
+            status_code=502,
+            detail=ErrorResponse(error={
+                "code": "upstream_blocked",
+                "message": "the upstream returned an access-control or rate-limit response; no bypass was attempted",
+                "request_id": request_id,
+                "upstream_status_code": response.status_code,
+                "upstream_url": str(response.url),
+            }).model_dump(),
+        )
+
     elapsed_ms = round((time.perf_counter() - started) * 1000)
     redirect_count = len(response.history)
     logger.info("resolve_succeeded request_id=%s status=%s redirects=%s elapsed_ms=%s", request_id, response.status_code, redirect_count, elapsed_ms)

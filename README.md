@@ -19,6 +19,7 @@ A small, production-oriented FastAPI service that accepts a short URL, follows *
 - Correctly treats URL text containing `error`, `failed`, or `timeout` as valid URL data; error classification is based on validation and actual HTTP client exceptions only
 - Explicit JSON error envelopes with stable error codes
 - Timeout, DNS, redirect-limit, malformed URL, and upstream-failure handling
+- Explicit `upstream_blocked` errors for upstream 401/403/429 responses, including the blocked URL and status code
 - Optional API key, exact host allowlist, and private-network blocking
 - Structured request logging without logging response bodies
 - Built-in browser UI at `/`
@@ -55,6 +56,8 @@ Error (`4xx` or `5xx`):
 ```
 
 A final HTTP `404` or `500` response is still a successful *resolution* because the redirect chain completed; its status is returned in `status_code`. Transport failures such as timeouts are API errors.
+
+If a destination returns `401`, `403`, or `429` (for example, an access-control, Cloudflare, anti-bot, or rate-limit page), the resolver returns HTTP `502` with `error.code = "upstream_blocked"`, the upstream status, and the URL where the block occurred. It does not spoof cookies/referers, solve challenges, skip timers or advertisements, or attempt to bypass the protection. Use an authorized API/integration or allowlisted service contract when access is required.
 
 ## Simple GET redirector
 
