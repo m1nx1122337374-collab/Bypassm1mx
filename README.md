@@ -22,8 +22,7 @@ A small, production-oriented FastAPI service that accepts a short URL, follows *
 - Explicit `upstream_blocked` errors for upstream 401/403/429 responses, including the blocked URL and status code
 - Optional API key, exact host allowlist, and private-network blocking
 - Structured request logging without logging response bodies
-- Built-in browser UI at `/`
-- Card-style UI shows the original URL above and resolved destination below; `/?link=...` can prefill and resolve automatically
+- Minimal public status page at `/` showing only `Online`
 - OpenAPI docs at `/docs`
 - Docker and Docker Compose support
 
@@ -79,7 +78,7 @@ Success responses contain `resolved_url`:
 }
 ```
 
-The route follows ordinary HTTP `Location` redirects only and is intentionally usable from the browser card without an API key. It does not use a third-party API or attempt to bypass access controls. The protected JSON API routes can still use `API_KEY` through `X-API-Key`.
+The route follows ordinary HTTP `Location` redirects only and is intentionally usable without an API key. The root page is a status page only; use `/bypass?link=...` or the documented API routes for resolution. It does not use a third-party API or attempt to bypass access controls. The protected JSON API routes can still use `API_KEY` through `X-API-Key`.
 
 ## HTML redirect fallback
 

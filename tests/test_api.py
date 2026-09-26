@@ -99,16 +99,14 @@ async def test_bypass_get_does_not_require_api_key(app_client, target_server, mo
 
 
 @pytest.mark.asyncio
-async def test_homepage_is_a_card_ui(app_client):
+async def test_homepage_is_online_only(app_client):
     transport = httpx.ASGITransport(app=app_client)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/")
     assert response.status_code == 200
-    assert "Authorized Link Shortcut" in response.text
-    assert "Original server link" in response.text
-    assert "Resolved / shortcut destination" in response.text
-    assert "Shareable shortcut link" in response.text
-    assert "Shortcut is online" in response.text
+    assert "<title>Online</title>" in response.text
+    assert "<h1>Online</h1>" in response.text
+    assert "Resolve destination" not in response.text
 
 
 @pytest.mark.asyncio
